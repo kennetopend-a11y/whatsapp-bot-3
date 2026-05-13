@@ -2,37 +2,33 @@
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
-    DisconnectReason 
+    DisconnectReason,
+    delay
 } = require("@whiskeysockets/baileys");
 const { Boom } = require("@hapi/boom");
 const P = require("pino");
 const fs = require("fs");
-const qrcode = require("qrcode-terminal");
 const http = require("http");
 const config = require("./config");
 
-// ---- CONTINUOUS PORT HEALTH CHECK BINDING FOR RENDER SERVER KEEPALIVE ----
+// ---- LIVE WEB PORT SERVICE BINDING FOR RENDER SERVER KEEPALIVE ----
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("Core Infrastructure Health Check Engine Active and Running\n");
+    res.end("Core Infrastructure Platform Active\n");
 }).listen(PORT, "0.0.0.0", () => {
     console.log(`[SYSTEM] Live keep-alive architecture port binding established on connection rule: ${PORT}`);
 });
 // -------------------------------------------------------------------------
 
-// Local persistent filesystem database initialization 
 const DB_FILE = "./database.json";
 if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify({ users: {} }, null, 2));
 }
 
 function getDatabase() {
-    try {
-        return JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-    } catch (e) {
-        return { users: {} };
-    }
+    try { return JSON.parse(fs.readFileSync(DB_FILE, "utf-8")); } 
+    catch (e) { return { users: {} }; }
 }
 
 function saveDatabase(data) {
@@ -40,43 +36,53 @@ function saveDatabase(data) {
 }
 
 async function startBot() {
-    // Preemptively ensure auth session folder structures are created cleanly
     if (!fs.existsSync("./auth_session")) {
         fs.mkdirSync("./auth_session", { recursive: true });
     }
 
     const { state, saveCreds } = await useMultiFileAuthState("auth_session");
 
+    // Re-engineered to explicitly pass a custom text device profile (Skips headless chrome browser download)
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false, // Prevents core terminal deprecation crash faults
+        printQRInTerminal: false,
         logger: P({ level: "silent" }),
-        browser: ["Ubuntu", "Chrome", "20.0.04"]
+        browser: ["Chrome (Linux)", "Chrome", "114.0.5735.198"]
     });
+
+    // ---- DIRECT TEXT-BASED PAIRING PROTOCOL METHOD ----
+    if (!sock.authState.creds.registered) {
+        // Strip out trailing server characters to get your clean mobile number
+        const phoneNumberOnly = config.ownerNumber.split("@")[0]; 
+        console.log(`\n[PAIRING] Requesting pairing token from WhatsApp for: +${phoneNumberOnly}\n`);
+        
+        await delay(6000); // Give Render network time to establish socket handshakes
+        try {
+            const code = await sock.requestPairingCode(phoneNumberOnly);
+            console.log("\n==================================================");
+            console.log(`🔑 YOUR WHATSAPP BOT PAIRING CODE IS: ${code}`);
+            console.log("==================================================\n");
+        } catch (error) {
+            console.log("[PAIRING ERROR] Failed to fetch code token. Retrying on next loop cycle.");
+        }
+    }
+    // --------------------------------------------------
 
     sock.ev.on("creds.update", saveCreds);
 
     sock.ev.on("connection.update", (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        // Clean manual QR text generation interpreter block
-        if (qr) {
-            console.log("\n==========================================================================");
-            console.log("📷 SCAN THIS HIGH-CONTRAST QR CODE VIA WHATSAPP LINKED DEVICES MANAGER:");
-            console.log("==========================================================================\n");
-            qrcode.generate(qr, { small: true });
-        }
+        const { connection, lastDisconnect } = update;
 
         if (connection === "close") {
             const shouldReconnect = (lastDisconnect?.error instanceof Boom) 
                 ? lastDisconnect.error.output?.statusCode !== DisconnectReason.loggedOut 
                 : true;
-            console.log(`[NETWATCH] Network link detached. Reconnection status loop: ${shouldReconnect}`);
+            console.log(`[NETWATCH] Connection cycling. Re-attempting handshake: ${shouldReconnect}`);
             if (shouldReconnect) {
                 startBot();
             }
         } else if (connection === "open") {
-            console.log(`\n==================================================\n[SUCCESS] ${config.botName} RUNNING STABLY IN PRODUCTION!\n==================================================\n`);
+            console.log(`\n==================================================\n[SUCCESS] ${config.botName} IS ONLINE AND LINKED!\n==================================================\n`);
         }
     });
 
@@ -112,7 +118,6 @@ async function startBot() {
                 await sock.sendMessage(from, { text: text }, { quoted: msg });
             };
 
-            // ---- ECONOMY ENGINE COMMAND IMPLEMENTATIONS ----
             if (command === "bal" || command === "balance") {
                 const totalAssets = user.wallet + user.bank;
                 const balLayout = `
@@ -144,9 +149,8 @@ async function startBot() {
                 await reply(`💰 DAILY REWARD DISPENSED\n+${config.currencySymbol}${config.dailyPayout.toLocaleString()} has been safely loaded into your active balance account!`);
             }
 
-            // ---- ADMINISTRATIVE FUNCTION COMMAND IMPLEMENTATIONS ----
             else if (command === "kick") {
-                if (!isGroup) return reply("This administrative action is strictly restricted to valid group layouts.");
+                if (!isGroup) return reply("This administrative action is restricted to groups.");
 
                 const groupMetadata = await sock.groupMetadata(from);
                 const isSenderAdmin = groupMetadata.participants.find(p => p.id === sender)?.admin;
@@ -159,20 +163,20 @@ async function startBot() {
                 const mentions = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
                 
                 if (mentions && mentions.length > 0) {
-                    target = String(mentions[0]); // Safe extraction mapping from array
+                    target = String(mentions[0]);
                 } else if (args.length > 0) {
-                    const rawNum = String(args[0]).replace(/[^0-9]/g, ""); // Safe validation parsing text string
+                    const rawNum = String(args[0]).replace(/[^0-9]/g, "");
                     if (rawNum.length > 5) {
                         target = `${rawNum}@s.whatsapp.net`;
                     }
                 }
 
                 if (!target || target.length < 15) {
-                    return reply("⚠️ Error: Please mention a valid user tag (@user) or provide their full phone number configuration.");
+                    return reply("⚠️ Error: Please mention a valid user tag (@user) or provide their full phone number.");
                 }
                 
                 await sock.groupParticipantsUpdate(from, [target], "remove");
-                await reply("Target profile successfully ejected from this chat thread ecosystem context.");
+                await reply("Target profile successfully ejected from this chat thread.");
             }
 
         } catch (err) {

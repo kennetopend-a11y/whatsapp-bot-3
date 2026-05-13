@@ -42,28 +42,28 @@ async function startBot() {
 
     const { state, saveCreds } = await useMultiFileAuthState("auth_session");
 
-    // Re-engineered to explicitly pass a custom text device profile (Skips headless chrome browser download)
     const sock = makeWASocket({
         auth: state,
         printQRInTerminal: false,
         logger: P({ level: "silent" }),
+        // Set fixed modern device properties to pass safety protocol checks
         browser: ["Chrome (Linux)", "Chrome", "114.0.5735.198"]
     });
 
     // ---- DIRECT TEXT-BASED PAIRING PROTOCOL METHOD ----
     if (!sock.authState.creds.registered) {
-        // Strip out trailing server characters to get your clean mobile number
-        const phoneNumberOnly = config.ownerNumber.split("@")[0]; 
-        console.log(`\n[PAIRING] Requesting pairing token from WhatsApp for: +${phoneNumberOnly}\n`);
+        // Cleanly isolates the numeric characters into a single raw text sequence
+        const rawNumberClean = config.ownerNumber.replace(/[^0-9]/g, ""); 
+        console.log(`\n[PAIRING] Requesting pairing token from WhatsApp for: +${rawNumberClean}\n`);
         
-        await delay(6000); // Give Render network time to establish socket handshakes
+        await delay(6000); // Wait for Render socket channels to open cleanly
         try {
-            const code = await sock.requestPairingCode(phoneNumberOnly);
+            const code = await sock.requestPairingCode(rawNumberClean);
             console.log("\n==================================================");
             console.log(`🔑 YOUR WHATSAPP BOT PAIRING CODE IS: ${code}`);
             console.log("==================================================\n");
         } catch (error) {
-            console.log("[PAIRING ERROR] Failed to fetch code token. Retrying on next loop cycle.");
+            console.log("[PAIRING ERROR] Failed to fetch code token. Retrying on next loop cycle.", error.message);
         }
     }
     // --------------------------------------------------
@@ -89,7 +89,7 @@ async function startBot() {
     sock.ev.on("messages.upsert", async ({ messages, type }) => {
         try {
             if (type !== "notify") return;
-            const msg = messages[0];
+            const msg = messages;
             if (!msg || !msg.message || msg.key.fromMe) return;
 
             const from = msg.key.remoteJid;
@@ -122,13 +122,16 @@ async function startBot() {
                 const totalAssets = user.wallet + user.bank;
                 const balLayout = `
 
+
 | 🏛️ WISTORIA ECONOMY
 |
 | 💵 Wallet: ${config.currencySymbol}${user.wallet.toLocaleString()}
 
+
 | 🏛️ Wistoria: ${config.currencySymbol}${user.bank.toLocaleString()}
 | 💎 Assets: ${config.currencySymbol}${totalAssets.toLocaleString()}
 |
+
 
 | 💠 Wistoria Economy Bot Platform
 `;
@@ -163,9 +166,9 @@ async function startBot() {
                 const mentions = msg.message.extendedTextMessage?.contextInfo?.mentionedJid;
                 
                 if (mentions && mentions.length > 0) {
-                    target = String(mentions[0]);
+                    target = String(mentions);
                 } else if (args.length > 0) {
-                    const rawNum = String(args[0]).replace(/[^0-9]/g, "");
+                    const rawNum = String(args).replace(/[^0-9]/g, "");
                     if (rawNum.length > 5) {
                         target = `${rawNum}@s.whatsapp.net`;
                     }
@@ -176,7 +179,7 @@ async function startBot() {
                 }
                 
                 await sock.groupParticipantsUpdate(from, [target], "remove");
-                await reply("Target profile successfully ejected from this chat thread.");
+                await reply("Target profile successfully evicted from this chat thread.");
             }
 
         } catch (err) {
